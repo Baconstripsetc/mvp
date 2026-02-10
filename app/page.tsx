@@ -1247,7 +1247,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
       }));
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo: `${window.location.origin}/auth/callback` },
       });
       if (error) {
         localStorage.removeItem("sana_pending_onboarding");
@@ -1276,11 +1276,6 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
     }
   }, [authEmail, acceptedTerms]);
 
-  // Raw step advance (no side effects)
-  const nextStepRaw = useCallback(() => {
-    setStep((s) => s + 1);
-  }, []);
-
   // OTP verification handler
   const handleVerifyOtp = useCallback(async () => {
     setAuthLoading(true);
@@ -1290,7 +1285,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
       if (error) { setAuthError(error.message); return; }
       if (data.user) {
         await saveOnboardingData(data.user.id);
-        nextStepRaw();
+        onComplete();
       }
     } catch (err) {
       console.error("[Sana] OTP verify / save error:", err);
@@ -1298,7 +1293,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
     } finally {
       setAuthLoading(false);
     }
-  }, [authEmail, otp, saveOnboardingData, nextStepRaw]);
+  }, [authEmail, otp, saveOnboardingData, onComplete]);
 
   // Email login handler
   const handleEmailLogin = useCallback(async () => {
@@ -1309,7 +1304,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
       if (error) { setAuthError(error.message); return; }
       if (data.user) {
         await saveOnboardingData(data.user.id);
-        nextStepRaw();
+        onComplete();
       }
     } catch (err) {
       console.error("[Sana] Login / save error:", err);
@@ -1317,7 +1312,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
     } finally {
       setAuthLoading(false);
     }
-  }, [authEmail, authPassword, saveOnboardingData, nextStepRaw]);
+  }, [authEmail, authPassword, saveOnboardingData, onComplete]);
 
   // Note: OAuth redirect handling is done in SanaApp.checkSession
   // which reads pending onboarding data from localStorage after redirect.
@@ -3035,6 +3030,12 @@ type ViewState = "LOADING" | "LANGUAGE_GATE" | "ONBOARDING" | "PRICING" | "DASHB
 export default function SanaApp() {
   const [lang, setLang] = useState<Language>("en");
   const [view, setView] = useState<ViewState>("LOADING");
+  const viewRef = React.useRef<ViewState>("LOADING");
+
+  // Keep ref in sync so async listeners can read the latest view
+  React.useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   const t = useCallback(
     (key: string) => translations[lang]?.[key] || translations.en[key] || key,
@@ -3189,6 +3190,12 @@ export default function SanaApp() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session?.user) {
         console.log("[Sana] Auth state: SIGNED_IN for", session.user.email);
+        // Don't override the view if the user is currently in the onboarding flow —
+        // the Onboarding component handles its own auth and step progression.
+        if (viewRef.current === "ONBOARDING") {
+          console.log("[Sana] Skipping handleUser — onboarding in progress");
+          return;
+        }
         await handleUser(session.user.id, session.user.email || "");
       }
     });
