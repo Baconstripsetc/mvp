@@ -111,6 +111,7 @@ const translations: Record<string, Record<string, string>> = {
     noPaymentNow: "No Payment Due Now",
     startTrial: "Start My 3-Day Free Trial",
     trialFooter: "3 days free, then",
+    continueWithFree: "Continue with free ->",
     unlockSana: "Unlock Sana to protect your family.",
     easyScanning: "Easy food scanning",
     easyScanningDesc: "Scan ingredients with just a picture",
@@ -1329,15 +1330,35 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
   // Note: OAuth redirect handling is done in SanaApp.checkSession
   // which reads pending onboarding data from localStorage after redirect.
 
-  // Show embedded checkout
-  const handleCheckout = useCallback(() => {
-    setShowCheckoutEmbed(true);
-  }, []);
+  // PAYMENT_BYPASS: Skip checkout, go straight to dashboard for camera testing
+  // Original: const handleCheckout = useCallback(() => { setShowCheckoutEmbed(true); }, []);
+  const handleCheckout = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({
+          subscription_plan: "active",
+          subscription_status: "active",
+        }).eq("id", user.id);
+      }
+    } catch (err) { console.error("[Sana] Bypass error:", err); }
+    onComplete();
+  }, [onComplete]);
 
-  // "Continue with free" — show the dowsell popup
-  const handleContinueFree = useCallback(() => {
-    setShowDowsell(true);
-  }, []);
+  // PAYMENT_BYPASS: Skip downsell, go straight to dashboard
+  // Original: const handleContinueFree = useCallback(() => { setShowDowsell(true); }, []);
+  const handleContinueFree = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({
+          subscription_plan: "free",
+          subscription_status: "free",
+        }).eq("id", user.id);
+      }
+    } catch (err) { console.error("[Sana] Bypass error:", err); }
+    onComplete();
+  }, [onComplete]);
 
   // Actually enter free mode — set profile to free and go to dashboard
   const handleEnterFreeMode = useCallback(async () => {
@@ -3179,8 +3200,19 @@ function PricingPage({ onComplete }: { onComplete: () => void }) {
     });
   }, []);
 
-  const handleCheckout = () => {
-    setShowCheckoutEmbed(true);
+  // PAYMENT_BYPASS: Skip checkout, go straight to dashboard for camera testing
+  // Original: const handleCheckout = () => { setShowCheckoutEmbed(true); };
+  const handleCheckout = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({
+          subscription_plan: "active",
+          subscription_status: "active",
+        }).eq("id", user.id);
+      }
+    } catch (err) { console.error("[Sana] Bypass error:", err); }
+    onComplete();
   };
 
   const onCheckoutComplete = useCallback(async () => {
@@ -3210,10 +3242,20 @@ function PricingPage({ onComplete }: { onComplete: () => void }) {
     }
   }, [onComplete]);
 
-  // "Continue with free" — show dowsell popup
-  const handleContinueFree = useCallback(() => {
-    setShowDowsell(true);
-  }, []);
+  // PAYMENT_BYPASS: Skip downsell, go straight to dashboard
+  // Original: const handleContinueFree = useCallback(() => { setShowDowsell(true); }, []);
+  const handleContinueFree = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({
+          subscription_plan: "free",
+          subscription_status: "free",
+        }).eq("id", user.id);
+      }
+    } catch (err) { console.error("[Sana] Bypass error:", err); }
+    onComplete();
+  }, [onComplete]);
 
   // Enter free mode — set profile to free and proceed
   const handleEnterFreeMode = useCallback(async () => {
