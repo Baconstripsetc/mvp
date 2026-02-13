@@ -10,6 +10,12 @@ export const metadata: Metadata = {
   title: 'Sana - Pediatric Nutrition Scanner',
   description: 'Protect your child with intelligent food scanning. Join 200,000+ parents who refuse normal standards.',
   generator: 'v0.app',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Sana',
+  },
 }
 
 export const viewport: Viewport = {
@@ -27,9 +33,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+      </head>
       <body className={`${inter.variable} font-sans antialiased`}>
         {children}
         <Analytics />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js')})}`
+          }}
+        />
       </body>
     </html>
   )

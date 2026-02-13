@@ -60,6 +60,15 @@ const translations: Record<string, Record<string, string>> = {
     minutes: "minutes",
     claimOffer: "Claim This Offer",
     declineFree: "Decline & Enter Free Mode (8 Scans Only)",
+    continueWithFree: "Continue with free →",
+    downsellHeadline: "One-Time Offer",
+    downsellPrice: "Yearly Plan at $42.88",
+    downsellPerDay: "Only for $0.12 per day",
+    claimDownsell: "Claim One-Time Offer",
+    continueFreePlan: "Continue with free plan",
+    scanLimitReached: "You've used all 8 free scans",
+    upgradeToUnlock: "Upgrade to unlock unlimited scans",
+    upgradeNow: "Upgrade Now",
     neuroShield: "Sana: Neuro-Shield Active",
     scanning: "Scanning...",
     highRisk: "High Risk Detected",
@@ -773,7 +782,7 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType>({
   lang: "en",
-  setLang: () => {},
+  setLang: () => { },
   t: (key: string) => key,
 });
 
@@ -843,7 +852,7 @@ function GlassCard({
 // Language Gate (Phase 1)
 function LanguageGate({ onComplete }: { onComplete: () => void }) {
   const { setLang } = useLanguage();
-  
+
   const languages: { code: Language; native: string }[] = [
     { code: "en", native: "English" },
     { code: "es", native: "Español" },
@@ -879,7 +888,7 @@ function LanguageGate({ onComplete }: { onComplete: () => void }) {
         <BioStarLogo size={72} animate />
         <h1 className="mt-3 text-2xl sm:text-3xl font-semibold tracking-tight text-[#1C1C1E]">Sana</h1>
       </motion.div>
-      
+
       <motion.p
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1195,6 +1204,8 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [selectedPlan, setSelectedPlan] = useState<"monthly" | "yearly">("yearly");
   const [showCheckoutEmbed, setShowCheckoutEmbed] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [showDowsell, setShowDowsell] = useState(false);
+  const [dowsellCheckout, setDowsellCheckout] = useState(false);
 
   const { lang } = useLanguage();
 
@@ -1285,7 +1296,8 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
       if (error) { setAuthError(error.message); return; }
       if (data.user) {
         await saveOnboardingData(data.user.id);
-        onComplete();
+        // Advance to the pricing/checkout step (step 10)
+        setStep(10);
       }
     } catch (err) {
       console.error("[Sana] OTP verify / save error:", err);
@@ -1293,9 +1305,8 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
     } finally {
       setAuthLoading(false);
     }
-  }, [authEmail, otp, saveOnboardingData, onComplete]);
+  }, [authEmail, otp, saveOnboardingData]);
 
-  // Email login handler
   const handleEmailLogin = useCallback(async () => {
     setAuthLoading(true);
     setAuthError("");
@@ -1304,7 +1315,8 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
       if (error) { setAuthError(error.message); return; }
       if (data.user) {
         await saveOnboardingData(data.user.id);
-        onComplete();
+        // Advance to the pricing/checkout step (step 10)
+        setStep(10);
       }
     } catch (err) {
       console.error("[Sana] Login / save error:", err);
@@ -1312,7 +1324,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
     } finally {
       setAuthLoading(false);
     }
-  }, [authEmail, authPassword, saveOnboardingData, onComplete]);
+  }, [authEmail, authPassword, saveOnboardingData]);
 
   // Note: OAuth redirect handling is done in SanaApp.checkSession
   // which reads pending onboarding data from localStorage after redirect.
@@ -1321,6 +1333,55 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
   const handleCheckout = useCallback(() => {
     setShowCheckoutEmbed(true);
   }, []);
+
+  // "Continue with free" — show the dowsell popup
+  const handleContinueFree = useCallback(() => {
+    setShowDowsell(true);
+  }, []);
+
+  // Actually enter free mode — set profile to free and go to dashboard
+  const handleEnterFreeMode = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({
+          subscription_plan: "free",
+          subscription_status: "free",
+        }).eq("id", user.id);
+      }
+    } catch (err) {
+      console.error("[Sana] Free mode error:", err);
+    }
+    onComplete();
+  }, [onComplete]);
+
+  // Dowsell checkout complete
+  const onDowsellComplete = useCallback(async () => {
+    setCheckoutLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        const res = await fetch("/api/whop/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email, userId: user.id }),
+        });
+        const data = await res.json();
+        if (data.subscribed) {
+          await supabase.from("profiles").update({
+            subscription_plan: data.plan || "downsell",
+            subscription_status: data.status || "active",
+          }).eq("id", user.id);
+        }
+      }
+      onComplete();
+    } catch (err) {
+      console.error("[Sana] Dowsell checkout error:", err);
+      onComplete();
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }, [onComplete]);
 
   // Handle successful embedded checkout
   const onCheckoutComplete = useCallback(async () => {
@@ -1363,12 +1424,13 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
         setShowInterstitial(null);
         setStep((s) => s + 1);
       }, 4000);
-    } else if (step === 10) {
-      onComplete();
+    } else if (step === 9) {
+      // Auth step is the last "content" step; after auth, advance to pricing step (10)
+      setStep((s) => s + 1);
     } else {
       setStep((s) => s + 1);
     }
-  }, [step, onComplete]);
+  }, [step]);
 
   const prevStep = useCallback(() => {
     if (step > 0) setStep((s) => s - 1);
@@ -1422,7 +1484,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
             <line x1="40" y1="120" x2="280" y2="120" stroke="#E5E5EA" strokeWidth="1" />
             <line x1="40" y1="80" x2="280" y2="80" stroke="#E5E5EA" strokeWidth="1" />
             <line x1="40" y1="40" x2="280" y2="40" stroke="#E5E5EA" strokeWidth="1" />
-            
+
             {/* Red line (Toxins) */}
             <motion.path
               d="M 40 140 Q 100 130 160 80 T 280 30"
@@ -1434,7 +1496,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
               animate={{ pathLength: 1 }}
               transition={{ duration: 2, ease: "easeOut" }}
             />
-            
+
             {/* Green line (Awareness) */}
             <motion.path
               d="M 40 150 Q 100 140 160 80 T 280 40"
@@ -1446,7 +1508,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
               animate={{ pathLength: 1 }}
               transition={{ duration: 2, ease: "easeOut", delay: 0.3 }}
             />
-            
+
             {/* Today marker */}
             <motion.g
               initial={{ opacity: 0 }}
@@ -1456,13 +1518,13 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
               <line x1="160" y1="30" x2="160" y2="170" stroke="#FF9F76" strokeWidth="2" strokeDasharray="5,5" />
               <text x="160" y="185" textAnchor="middle" className="fill-[#FF9F76] text-sm font-medium">Today</text>
             </motion.g>
-            
+
             {/* Labels */}
             <text x="285" y="35" className="fill-[#FF3B30] text-xs">Toxins</text>
             <text x="285" y="50" className="fill-[#34C759] text-xs">Awareness</text>
           </svg>
         </div>
-        
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1811,7 +1873,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
             ← Back
           </button>
         </div>
-        ) : authMode === "login" ? (
+      ) : authMode === "login" ? (
         // Login
         <div className="w-full">
           <div className="flex justify-center mb-6">
@@ -1878,10 +1940,10 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
             <GlassCard onClick={() => { if (!acceptedTerms) { setAuthError("Please accept the Terms and Privacy Policy first."); return; } handleGoogleSignIn(); }}
               className="py-4 flex items-center justify-center gap-3 text-lg font-semibold text-[#1C1C1E] touch-target no-select">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
               </svg>
               Continue with Google
             </GlassCard>
@@ -1904,9 +1966,8 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
               <button
                 type="button"
                 onClick={() => { setAcceptedTerms(!acceptedTerms); setAuthError(""); }}
-                className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
-                  acceptedTerms ? "bg-[#FF9F76] border-[#FF9F76]" : "border-[#C7C7CC] bg-white/80"
-                }`}
+                className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${acceptedTerms ? "bg-[#FF9F76] border-[#FF9F76]" : "border-[#C7C7CC] bg-white/80"
+                  }`}
               >
                 {acceptedTerms && <Check className="w-3 h-3 text-white" />}
               </button>
@@ -2071,8 +2132,89 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
           <p className="mt-3 text-center text-xs text-[#8E8E93]">
             {t("trialFooter")} {selectedPlan === "yearly" ? "$62.88/yr ($5.24/mo)" : "$18.88/mo"}
           </p>
+          <button
+            onClick={handleContinueFree}
+            className="mt-4 w-full text-center text-sm font-semibold text-[#FF9F76] underline underline-offset-2 active:opacity-70 transition-opacity"
+          >
+            {t("continueWithFree")}
+          </button>
         </>
       )}
+
+      {/* Dowsell Popup */}
+      <AnimatePresence>
+        {showDowsell && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-5"
+            onClick={() => setShowDowsell(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="w-full max-w-sm bg-white rounded-3xl p-6 sm:p-8 shadow-2xl text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4">
+                <span className="text-4xl">🎉</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1C1C1E] mb-1">
+                {t("downsellHeadline")}
+              </h2>
+              <p className="text-2xl sm:text-3xl font-extrabold text-[#FF9F76] mb-2">
+                {t("downsellPrice")}
+              </p>
+              <p className="text-sm text-[#8E8E93] mb-6">
+                {t("downsellPerDay")}
+              </p>
+
+              {dowsellCheckout ? (
+                <div>
+                  {checkoutLoading && (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#FF9F76] border-t-transparent" />
+                    </div>
+                  )}
+                  <div className={checkoutLoading ? "opacity-50 pointer-events-none" : ""}>
+                    <WhopCheckoutEmbed
+                      planId={process.env.NEXT_PUBLIC_WHOP_DOWNSELL_PLAN || ""}
+                      skipRedirect
+                      onComplete={onDowsellComplete}
+                      prefill={{ email: authEmail }}
+                      theme="light"
+                      hidePrice
+                      fallback={
+                        <div className="flex items-center justify-center py-8">
+                          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#FF9F76] border-t-transparent" />
+                        </div>
+                      }
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setDowsellCheckout(true)}
+                    className="w-full bg-[#FF9F76] text-white py-3.5 sm:py-4 rounded-2xl font-semibold active:scale-95 transition-transform touch-target no-select shadow-lg shadow-[#FF9F76]/30"
+                  >
+                    {t("claimDownsell")}
+                  </button>
+                  <button
+                    onClick={handleEnterFreeMode}
+                    className="mt-4 w-full text-center text-xs text-[#8E8E93] underline underline-offset-2 active:opacity-70 transition-opacity"
+                  >
+                    {t("continueFreePlan")}
+                  </button>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>,
   ];
 
@@ -2088,9 +2230,8 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
         {Array.from({ length: 11 }).map((_, i) => (
           <div
             key={i}
-            className={`h-1 flex-1 rounded-full transition-colors ${
-              i <= step ? "bg-[#FF9F76]" : "bg-[#E5E5EA]"
-            }`}
+            className={`h-1 flex-1 rounded-full transition-colors ${i <= step ? "bg-[#FF9F76]" : "bg-[#E5E5EA]"
+              }`}
           />
         ))}
       </div>
@@ -2107,7 +2248,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
         </div>
       )}
 
-      <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full px-1 overflow-y-auto scroll-touch">
+      <div className="flex-1 flex flex-col max-w-sm mx-auto w-full px-1 overflow-y-auto scroll-touch">
         <AnimatePresence mode="wait">{steps[step]}</AnimatePresence>
       </div>
     </motion.div>
@@ -2227,6 +2368,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [selectedScan, setSelectedScan] = useState<DashboardScan | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [showCaptureSuccess, setShowCaptureSuccess] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanResult, setScanResult] = useState<{ product_name: string; risk_level: string; pros: string[]; cons: string[]; verdict_summary: string; safe_swap_category: string } | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [legalPage, setLegalPage] = useState<"terms" | "privacy" | null>(null);
   const fileInputRef = useCallback((node: HTMLInputElement | null) => {
     if (node) node.setAttribute("capture", "environment");
@@ -2237,6 +2381,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [onboardingData, setOnboardingData] = useState<{ role: string; child_name: string } | null>(null);
   const [profile, setProfile] = useState<{ email: string; display_name: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [subscriptionPlan, setSubscriptionPlan] = useState<string | null>(null);
+  const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
 
   // Fetch data from Supabase
   useEffect(() => {
@@ -2254,6 +2400,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         if (scansRes.data) setScans(scansRes.data);
         if (onbRes.data) setOnboardingData(onbRes.data);
         if (profRes.data) setProfile(profRes.data);
+
+        // Fetch subscription plan
+        const { data: subData } = await supabase.from("profiles").select("subscription_plan").eq("id", user.id).single();
+        if (subData) setSubscriptionPlan(subData.subscription_plan);
       } catch (err) {
         console.error("Failed to load dashboard data:", err);
       } finally {
@@ -2270,6 +2420,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const healthScore = totalScans > 0 ? Math.round((safeCount / totalScans) * 100) : 0;
   const healthPct = healthScore / 100;
 
+  // Free user scan limit
+  const FREE_SCAN_LIMIT = 8;
+  const isPaidUser = subscriptionPlan && subscriptionPlan !== "free";
+  const remainingFreeScans = Math.max(0, FREE_SCAN_LIMIT - totalScans);
+
   const filteredScans = scans.filter((s) =>
     scanFilter === "all" ? true : s.status === scanFilter
   );
@@ -2282,17 +2437,62 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     ? `${onboardingData.child_name}'s ${roleLabel}`
     : "Sana";
 
-  const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setCapturedImage(ev.target?.result as string);
-        setShowCaptureSuccess(true);
-        setTimeout(() => setShowCaptureSuccess(false), 3000);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    // Free user scan limit check
+    if (!isPaidUser && totalScans >= FREE_SCAN_LIMIT) {
+      setShowUpgradePrompt(true);
+      e.target.value = "";
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const base64 = ev.target?.result as string;
+      setCapturedImage(base64);
+      setScanLoading(true);
+      setScanError(null);
+      setScanResult(null);
+
+      try {
+        const res = await fetch("/api/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageBase64: base64 }),
+        });
+
+        if (!res.ok) throw new Error("Scan failed");
+        const data = await res.json();
+        setScanResult(data);
+
+        // Save to Supabase
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const status = data.risk_level === "Low" ? "safe" : "flagged";
+          const emoji = status === "safe" ? "✅" : "⚠️";
+          const { data: inserted } = await supabase.from("scans").insert({
+            user_id: user.id,
+            product_name: data.product_name,
+            brand: null,
+            emoji,
+            status,
+            reasons_to_keep: data.pros || [],
+            reasons_to_avoid: data.cons || [],
+          }).select().single();
+          if (inserted) setScans((prev) => [inserted, ...prev]);
+        }
+      } catch (err) {
+        console.error("[Sana] Scan error:", err);
+        setScanError("Could not analyze this image. Please try again with a clearer photo of the ingredients.");
+      } finally {
+        setScanLoading(false);
+      }
+    };
+    reader.readAsDataURL(file);
+    // Reset file input so the same file can be re-selected
+    e.target.value = "";
   };
 
   if (loading) {
@@ -2348,11 +2548,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               { key: "flagged" as const, label: "Toxic", count: flaggedCount },
             ].map((filter) => (
               <button key={filter.key} onClick={() => setScanFilter(filter.key)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                  scanFilter === filter.key
-                    ? filter.key === "flagged" ? "bg-[#FF3B30] text-white" : filter.key === "safe" ? "bg-[#34C759] text-white" : "bg-[#FF9F76] text-white"
-                    : "bg-white/80 backdrop-blur-xl border border-white/40 text-[#8E8E93]"
-                }`}>
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${scanFilter === filter.key
+                  ? filter.key === "flagged" ? "bg-[#FF3B30] text-white" : filter.key === "safe" ? "bg-[#34C759] text-white" : "bg-[#FF9F76] text-white"
+                  : "bg-white/80 backdrop-blur-xl border border-white/40 text-[#8E8E93]"
+                  }`}>
                 {filter.label} ({filter.count})
               </button>
             ))}
@@ -2401,17 +2600,109 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
       </div>
 
-      {/* Capture Success Toast */}
+      {/* Scanning Overlay */}
       <AnimatePresence>
-        {showCaptureSuccess && (
-          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="absolute top-16 left-6 right-6 z-40">
-            <GlassCard className="p-3.5 flex items-center gap-3 bg-[#34C759]/10 border-[#34C759]/30">
-              <div className="w-8 h-8 rounded-full bg-[#34C759] flex items-center justify-center shrink-0"><Check className="w-4 h-4 text-white" /></div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-[#1C1C1E] text-sm">Image captured!</p>
-                <p className="text-[11px] text-[#8E8E93]">Saved for processing. Results coming soon.</p>
-              </div>
-            </GlassCard>
+        {(scanLoading || scanResult || scanError) && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => { if (!scanLoading) { setScanResult(null); setScanError(null); setCapturedImage(null); } }}>
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 300 }} onClick={(e) => e.stopPropagation()} className="relative w-full max-w-md bg-[#F2F2F7] rounded-t-3xl max-h-[90dvh] flex flex-col">
+              <div className="flex justify-center pt-3 pb-2"><div className="w-10 h-1 rounded-full bg-[#E5E5EA]" /></div>
+
+              {scanLoading && (
+                <div className="px-6 py-12 flex flex-col items-center gap-4">
+                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                    <Scan className="w-12 h-12 text-[#FF9F76]" />
+                  </motion.div>
+                  <h2 className="text-xl font-bold text-[#1C1C1E]">Analyzing ingredients...</h2>
+                  <p className="text-sm text-[#8E8E93] text-center">Sana is checking this product against EU & WHO safety standards</p>
+                  <div className="w-48 h-1.5 bg-[#E5E5EA] rounded-full overflow-hidden mt-2">
+                    <motion.div className="h-full bg-[#FF9F76] rounded-full" animate={{ x: ["-100%", "100%"] }} transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }} style={{ width: "50%" }} />
+                  </div>
+                </div>
+              )}
+
+              {scanError && (
+                <div className="px-6 py-8 flex flex-col items-center gap-4">
+                  <div className="w-14 h-14 rounded-full bg-[#FF3B30]/10 flex items-center justify-center">
+                    <AlertTriangle className="w-7 h-7 text-[#FF3B30]" />
+                  </div>
+                  <h2 className="text-lg font-bold text-[#1C1C1E] text-center">Scan Failed</h2>
+                  <p className="text-sm text-[#8E8E93] text-center max-w-xs">{scanError}</p>
+                  <div className="flex gap-3 w-full mt-2">
+                    <button onClick={() => { setScanError(null); setCapturedImage(null); }} className="flex-1 py-3 rounded-2xl border border-[#E5E5EA] text-sm font-semibold text-[#1C1C1E] active:scale-95 transition-transform">Dismiss</button>
+                    <button onClick={() => { setScanError(null); document.getElementById("camera-input")?.click(); }} className="flex-1 py-3 rounded-2xl bg-[#FF9F76] text-white text-sm font-semibold active:scale-95 transition-transform">Try Again</button>
+                  </div>
+                </div>
+              )}
+
+              {scanResult && (
+                <div className="flex-1 overflow-y-auto scroll-touch">
+                  <div className="px-6 pb-4">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-sm" style={{ background: scanResult.risk_level === "Low" ? "#34C759" : scanResult.risk_level === "High" ? "#FF3B30" : "#FF9F76" }}>
+                        <span className="text-2xl text-white">{scanResult.risk_level === "Low" ? "✓" : "!"}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h2 className="text-lg font-bold text-[#1C1C1E] truncate">{scanResult.product_name}</h2>
+                        <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${scanResult.risk_level === "Low" ? "bg-[#34C759]/10 text-[#34C759]" : scanResult.risk_level === "High" ? "bg-[#FF3B30]/10 text-[#FF3B30]" : "bg-[#FF9F76]/10 text-[#FF9F76]"}`}>
+                          {scanResult.risk_level} Risk
+                        </span>
+                      </div>
+                    </div>
+
+                    <GlassCard className="p-4 mb-4">
+                      <p className="text-sm font-semibold text-[#1C1C1E] leading-relaxed">{scanResult.verdict_summary}</p>
+                    </GlassCard>
+
+                    {scanResult.cons.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2.5">
+                          <div className="w-6 h-6 rounded-full bg-[#FF3B30] flex items-center justify-center"><AlertTriangle className="w-3.5 h-3.5 text-white" /></div>
+                          <h3 className="font-semibold text-[#1C1C1E] text-sm">Concerns</h3>
+                        </div>
+                        <div className="space-y-2">
+                          {scanResult.cons.map((con, i) => (
+                            <GlassCard key={i} className="p-3 flex items-start gap-2.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#FF3B30] mt-1.5 shrink-0" />
+                              <p className="text-sm text-[#1C1C1E] leading-relaxed">{con}</p>
+                            </GlassCard>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {scanResult.pros.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2.5">
+                          <div className="w-6 h-6 rounded-full bg-[#34C759] flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white" /></div>
+                          <h3 className="font-semibold text-[#1C1C1E] text-sm">Positives</h3>
+                        </div>
+                        <div className="space-y-2">
+                          {scanResult.pros.map((pro, i) => (
+                            <GlassCard key={i} className="p-3 flex items-start gap-2.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#34C759] mt-1.5 shrink-0" />
+                              <p className="text-sm text-[#1C1C1E] leading-relaxed">{pro}</p>
+                            </GlassCard>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <GlassCard className="p-3.5 flex items-center gap-3 bg-[#34C759]/5 mb-4">
+                      <Sparkles className="w-5 h-5 text-[#34C759] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[#8E8E93]">Try instead</p>
+                        <p className="text-sm font-semibold text-[#1C1C1E]">{scanResult.safe_swap_category}</p>
+                      </div>
+                    </GlassCard>
+                  </div>
+
+                  <div className="px-6 py-4 border-t border-[#E5E5EA]/50">
+                    <button onClick={() => { setScanResult(null); setCapturedImage(null); }} className="w-full bg-[#FF9F76] text-white py-3.5 rounded-2xl font-semibold active:scale-95 transition-transform touch-target no-select">Done</button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2483,11 +2774,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               { key: "flagged" as const, label: "Toxic", count: flaggedCount },
             ].map((filter) => (
               <button key={filter.key} onClick={() => setScanFilter(filter.key)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                  scanFilter === filter.key
-                    ? filter.key === "flagged" ? "bg-[#FF3B30] text-white" : filter.key === "safe" ? "bg-[#34C759] text-white" : "bg-[#FF9F76] text-white"
-                    : "bg-white/80 backdrop-blur-xl border border-white/40 text-[#8E8E93]"
-                }`}>
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${scanFilter === filter.key
+                  ? filter.key === "flagged" ? "bg-[#FF3B30] text-white" : filter.key === "safe" ? "bg-[#34C759] text-white" : "bg-[#FF9F76] text-white"
+                  : "bg-white/80 backdrop-blur-xl border border-white/40 text-[#8E8E93]"
+                  }`}>
                 {filter.label} ({filter.count})
               </button>
             ))}
@@ -2518,6 +2808,56 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <AnimatePresence>
         {selectedScan && <ScanDetailSheet scan={selectedScan} onClose={() => setSelectedScan(null)} />}
       </AnimatePresence>
+
+      {/* Upgrade Prompt Modal (free scan limit reached) */}
+      <AnimatePresence>
+        {showUpgradePrompt && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-5"
+            onClick={() => setShowUpgradePrompt(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="w-full max-w-sm bg-white rounded-3xl p-6 sm:p-8 shadow-2xl text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4">
+                <div className="w-16 h-16 mx-auto rounded-full bg-[#FFF5F0] flex items-center justify-center">
+                  <Scan className="w-8 h-8 text-[#FF9F76]" />
+                </div>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1C1C1E] mb-2">
+                {t("scanLimitReached")}
+              </h2>
+              <p className="text-sm text-[#8E8E93] mb-6">
+                {t("upgradeToUnlock")}
+              </p>
+              <button
+                onClick={() => {
+                  setShowUpgradePrompt(false);
+                  onLogout();
+                }}
+                className="w-full bg-[#FF9F76] text-white py-3.5 sm:py-4 rounded-2xl font-semibold active:scale-95 transition-transform touch-target no-select shadow-lg shadow-[#FF9F76]/30"
+              >
+                {t("upgradeNow")}
+              </button>
+              <button
+                onClick={() => setShowUpgradePrompt(false)}
+                className="mt-3 w-full text-center text-xs text-[#8E8E93] active:opacity-70 transition-opacity"
+              >
+                {t("close") || "Close"}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <DashboardNav activeTab={activeTab} setActiveTab={setActiveTab} />
     </motion.div>
   );
@@ -2535,9 +2875,8 @@ function ScanListItem({ item, onClick }: { item: DashboardScan; onClick: () => v
         <p className="text-[11px] text-[#8E8E93]">{item.brand} · {formatScanTime(item.scanned_at)}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-          item.status === "safe" ? "bg-[#34C759]/10 text-[#34C759]" : "bg-[#FF3B30]/10 text-[#FF3B30]"
-        }`}>
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${item.status === "safe" ? "bg-[#34C759]/10 text-[#34C759]" : "bg-[#FF3B30]/10 text-[#FF3B30]"
+          }`}>
           {item.status === "safe" ? "Safe" : "Toxic"}
         </span>
         <ChevronRight className="w-4 h-4 text-[#8E8E93]" />
@@ -2831,6 +3170,8 @@ function PricingPage({ onComplete }: { onComplete: () => void }) {
   const [userEmail, setUserEmail] = useState("");
   const [showCheckoutEmbed, setShowCheckoutEmbed] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [showDowsell, setShowDowsell] = useState(false);
+  const [dowsellCheckout, setDowsellCheckout] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -2869,6 +3210,55 @@ function PricingPage({ onComplete }: { onComplete: () => void }) {
     }
   }, [onComplete]);
 
+  // "Continue with free" — show dowsell popup
+  const handleContinueFree = useCallback(() => {
+    setShowDowsell(true);
+  }, []);
+
+  // Enter free mode — set profile to free and proceed
+  const handleEnterFreeMode = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({
+          subscription_plan: "free",
+          subscription_status: "free",
+        }).eq("id", user.id);
+      }
+    } catch (err) {
+      console.error("[Sana] Free mode error:", err);
+    }
+    onComplete();
+  }, [onComplete]);
+
+  // Dowsell checkout complete
+  const onDowsellComplete = useCallback(async () => {
+    setCheckoutLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        const res = await fetch("/api/whop/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email, userId: user.id }),
+        });
+        const data = await res.json();
+        if (data.subscribed) {
+          await supabase.from("profiles").update({
+            subscription_plan: data.plan || "downsell",
+            subscription_status: data.status || "active",
+          }).eq("id", user.id);
+        }
+      }
+      onComplete();
+    } catch (err) {
+      console.error("[Sana] Dowsell checkout error:", err);
+      onComplete();
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }, [onComplete]);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -2876,7 +3266,7 @@ function PricingPage({ onComplete }: { onComplete: () => void }) {
       exit={{ opacity: 0 }}
       className="min-h-[100dvh] bg-[#F2F2F7] flex flex-col safe-all"
     >
-      <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full px-5 py-8">
+      <div className="flex-1 flex flex-col max-w-sm mx-auto w-full px-5 py-8 overflow-y-auto">
         {showCheckoutEmbed ? (
           <div>
             <button
@@ -3015,9 +3405,90 @@ function PricingPage({ onComplete }: { onComplete: () => void }) {
             <p className="mt-3 text-center text-xs text-[#8E8E93]">
               {t("trialFooter")} {selectedPlan === "yearly" ? "$62.88/yr ($5.24/mo)" : "$18.88/mo"}
             </p>
+            <button
+              onClick={handleContinueFree}
+              className="mt-4 w-full text-center text-sm font-semibold text-[#FF9F76] underline underline-offset-2 active:opacity-70 transition-opacity"
+            >
+              {t("continueWithFree")}
+            </button>
           </>
         )}
       </div>
+
+      {/* Dowsell Popup */}
+      <AnimatePresence>
+        {showDowsell && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-5"
+            onClick={() => setShowDowsell(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="w-full max-w-sm bg-white rounded-3xl p-6 sm:p-8 shadow-2xl text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4">
+                <span className="text-4xl">🎉</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1C1C1E] mb-1">
+                {t("downsellHeadline")}
+              </h2>
+              <p className="text-2xl sm:text-3xl font-extrabold text-[#FF9F76] mb-2">
+                {t("downsellPrice")}
+              </p>
+              <p className="text-sm text-[#8E8E93] mb-6">
+                {t("downsellPerDay")}
+              </p>
+
+              {dowsellCheckout ? (
+                <div>
+                  {checkoutLoading && (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#FF9F76] border-t-transparent" />
+                    </div>
+                  )}
+                  <div className={checkoutLoading ? "opacity-50 pointer-events-none" : ""}>
+                    <WhopCheckoutEmbed
+                      planId={process.env.NEXT_PUBLIC_WHOP_DOWNSELL_PLAN || ""}
+                      skipRedirect
+                      onComplete={onDowsellComplete}
+                      prefill={{ email: userEmail }}
+                      theme="light"
+                      hidePrice
+                      fallback={
+                        <div className="flex items-center justify-center py-8">
+                          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#FF9F76] border-t-transparent" />
+                        </div>
+                      }
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setDowsellCheckout(true)}
+                    className="w-full bg-[#FF9F76] text-white py-3.5 sm:py-4 rounded-2xl font-semibold active:scale-95 transition-transform touch-target no-select shadow-lg shadow-[#FF9F76]/30"
+                  >
+                    {t("claimDownsell")}
+                  </button>
+                  <button
+                    onClick={handleEnterFreeMode}
+                    className="mt-4 w-full text-center text-xs text-[#8E8E93] underline underline-offset-2 active:opacity-70 transition-opacity"
+                  >
+                    {t("continueFreePlan")}
+                  </button>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -3223,7 +3694,7 @@ export default function SanaApp() {
             <LanguageGate key="language" onComplete={() => setView("ONBOARDING")} />
           )}
           {view === "ONBOARDING" && (
-            <Onboarding key="onboarding" onComplete={() => setView("PRICING")} />
+            <Onboarding key="onboarding" onComplete={() => setView("DASHBOARD")} />
           )}
           {view === "PRICING" && (
             <PricingPage key="pricing" onComplete={() => setView("DASHBOARD")} />
