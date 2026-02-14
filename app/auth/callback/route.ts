@@ -6,15 +6,16 @@ export async function GET(request: Request) {
   const code = searchParams.get("code");
 
   if (code) {
+    // PKCE flow: exchange code for session (server-side)
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      // Redirect to home — the client-side SanaApp will detect
-      // the session + pending localStorage data and save onboarding.
       return NextResponse.redirect(origin);
     }
   }
 
-  // If code exchange failed, redirect home anyway
-  return NextResponse.redirect(origin);
+  // Implicit flow: tokens are in the URL hash (not visible to server)
+  // Redirect to home — the client-side Supabase will detect tokens via detectSessionInUrl
+  // We redirect to /?auth=callback so the client knows this is a callback
+  return NextResponse.redirect(`${origin}?auth=callback`);
 }

@@ -1259,7 +1259,7 @@ function Onboarding({ onComplete }: { onComplete: () => void }) {
       }));
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+        options: { redirectTo: window.location.origin },
       });
       if (error) {
         localStorage.removeItem("sana_pending_onboarding");
