@@ -3676,8 +3676,46 @@ export default function SanaApp() {
         return;
       }
 
-      // 4. No pending data — user needs to go through onboarding
-      setView("LANGUAGE_GATE");
+      // 4. Signed-in user with no onboarding and no localStorage backup
+      //    This happens when localStorage is lost during OAuth redirect (cross-origin, incognito, etc.)
+      //    Create a minimal onboarding record and send to dashboard rather than restarting the flow
+      console.log("[Sana] Signed-in user with no onboarding data. Creating minimal record...");
+      try {
+        await supabase.from("onboarding").upsert({
+          user_id: userId,
+          role: "parent",
+          child_name: "My Child",
+          child_age: "",
+          goal: "",
+          symptoms: [],
+          diet_status: "",
+          time_pain: "",
+          completed_at: new Date().toISOString(),
+        }, { onConflict: "user_id" });
+
+        // Set free plan so they can access dashboard
+        await supabase.from("profiles").update({
+          subscription_plan: "free",
+          subscription_status: "free",
+        }).eq("id", userId);
+
+        // Seed demo scans
+        const { data: existingScans } = await supabase.from("scans").select("id").eq("user_id", userId).limit(1);
+        if (!existingScans || existingScans.length === 0) {
+          const demoScans = [
+            { user_id: userId, product_name: "Organic Baby Puffs", brand: "Happy Baby", emoji: "🥣", status: "safe", reasons_to_keep: ["USDA Organic certified", "No artificial colors or flavors", "Contains iron and choline for brain development", "Simple ingredient list (6 ingredients)"], reasons_to_avoid: [] },
+            { user_id: userId, product_name: "Cheerios Original", brand: "General Mills", emoji: "🥣", status: "flagged", reasons_to_keep: ["Good source of whole grain oats", "Low in sugar (1g per serving)"], reasons_to_avoid: ["Contains Trisodium Phosphate (TSP)", "Glyphosate residue detected", "BHT added as preservative"] },
+            { user_id: userId, product_name: "Earth's Best Oatmeal", brand: "Earth's Best", emoji: "🥣", status: "safe", reasons_to_keep: ["Organic whole grain oats", "No artificial flavors or preservatives", "Fortified with iron and zinc", "Non-GMO verified"], reasons_to_avoid: [] },
+          ];
+          await supabase.from("scans").insert(demoScans);
+        }
+
+        console.log("[Sana] Minimal onboarding created → DASHBOARD");
+        setView("DASHBOARD");
+      } catch (err) {
+        console.error("[Sana] Failed to create minimal onboarding:", err);
+        setView("DASHBOARD");
+      }
     }
 
     // 1. Check for existing session (already logged in, page refresh)
